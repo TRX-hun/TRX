@@ -1,6 +1,8 @@
 const crypto=require("crypto");
 
-const response=(data,status=200)=>new Response(
+const send=(data,status=200)=>{
+
+return new Response(
 JSON.stringify(data),
 {
 status,
@@ -13,87 +15,74 @@ headers:{
 }
 );
 
+};
+
 const xorData=(data,key)=>{
 
-let out="";
+let output="";
 
-for(let i=0;i<data.length;i++){
+for(
+let i=0;
+i<data.length;
+i++
+){
 
-out+=String.fromCharCode(
+output+=String.fromCharCode(
 data.charCodeAt(i)^
-key.charCodeAt(i%key.length)
+key.charCodeAt(
+i%key.length
+)
 );
 
 }
 
-return out;
-};
-
-const shuffle=(data,seed)=>{
-
-const a=data.split("");
-let x=seed>>>0;
-
-for(let i=a.length-1;i>0;i--){
-
-x=(Math.imul(x,1664525)+1013904223)>>>0;
-
-const j=x%(i+1);
-
-const t=a[i];
-
-a[i]=a[j];
-a[j]=t;
-
-}
-
-return a.join("");
+return output;
 
 };
 
-const makeLua=(source,options)=>{
+const makeSeed=()=>{
 
-const key=crypto.randomBytes(18).toString("hex");
+return crypto
+.randomBytes(4)
+.readUInt32BE(0);
 
-const seed=crypto.randomBytes(4).readUInt32BE(0);
+};
 
-let payload=source;
+const shuffleBytes=(bytes,seed)=>{
 
-if(options.xor!==false)
-payload=xorData(payload,key);
-
-let bytes=Buffer.from(payload,"latin1");
-
-if(options.numeric!==false){
-
-const arr=Array.from(bytes);
+const array=Array.from(bytes);
 
 let x=seed>>>0;
 
-for(let i=arr.length-1;i>0;i--){
+for(
+let i=array.length-1;
+i>0;
+i--
+){
 
-x=(Math.imul(x,1664525)+1013904223)>>>0;
+x=(
+Math.imul(
+x,
+1664525
+)+
+1013904223
+)>>>0;
 
 const j=x%(i+1);
 
-const t=arr[i];
+const temp=array[i];
 
-arr[i]=arr[j];
-arr[j]=t;
+array[i]=array[j];
 
-}
-
-bytes=Buffer.from(arr);
+array[j]=temp;
 
 }
 
-const encoded=
-options.base64!==false
-?bytes.toString("base64")
-:bytes.toString("latin1");
+return Buffer.from(array);
 
-if(options.loader===false)
-return encoded;
+};
+
+const createLoader=(encoded,key,seed)=>{
 
 return `local p=${JSON.stringify(encoded)}
 local k=${JSON.stringify(key)}
@@ -102,6 +91,7 @@ local s=${seed}
 local b="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 local function bx(a,c)
+
 local r=0
 local q=1
 
@@ -121,13 +111,14 @@ q=q*2
 end
 
 return r
+
 end
 
 local function dec(x)
 
 x=x:gsub("[^"..b.."=]","")
 
-local o={}
+local out={}
 local n=0
 local v=0
 
@@ -137,14 +128,20 @@ local c=x:sub(i,i)
 
 if c~="=" then
 
-local z=b:find(c,1,true)-1
+local pos=b:find(c,1,true)
+
+if pos then
+
+local z=pos-1
 
 v=v*64+z
+
 n=n+1
 
 if n==4 then
 
-o[#o+1]=string.char(
+out[#out+1]=string.char(
+math.floor(v/16777216)%256,
 math.floor(v/65536)%256,
 math.floor(v/256)%256,
 v%256
@@ -154,52 +151,64 @@ v=0
 n=0
 
 end
-end
+
 end
 
-local out=table.concat(o)
+end
 
-local pad=0
+end
+
+local result=table.concat(out)
+
+local padding=0
 
 if x:sub(-1)=="=" then
-pad=1
+padding=1
 end
 
 if x:sub(-2,-2)=="=" then
-pad=2
+padding=2
 end
 
-if pad>0 then
-out=out:sub(1,-pad-1)
+if padding>0 then
+
+result=result:sub(
+1,
+#result-padding
+)
+
 end
 
-return out
+return result
 
 end
 
 local function unshuffle(a,seed)
 
 local n=#a
-local jlist={}
+local swaps={}
 local x=seed
 
 for i=n-1,1,-1 do
 
-x=(x*1664525+1013904223)%4294967296
+x=(
+x*1664525+
+1013904223
+)%4294967296
 
-jlist[i]=x%(i+1)+1
+swaps[i]=x%(i+1)+1
 
 end
 
 for i=1,n-1 do
 
-local ri=n-i
-local j=jlist[ri]
+local index=n-i
+local j=swaps[index]
 
-local t=a[ri+1]
+local temp=a[index+1]
 
-a[ri+1]=a[j]
-a[j]=t
+a[index+1]=a[j]
+a[j]=temp
 
 end
 
@@ -207,73 +216,168 @@ return a
 
 end
 
-local d=dec(p)
+local data=dec(p)
 
-local a={}
+local bytes={}
 
-for i=1,#d do
-a[i]=d:byte(i)
+for i=1,#data do
+
+bytes[i]=data:byte(i)
+
 end
 
-a=unshuffle(a,s)
+bytes=unshuffle(bytes,s)
 
-local q={}
+local chars={}
 
-for i=1,#a do
-q[i]=string.char(a[i])
+for i=1,#bytes do
+
+chars[i]=string.char(bytes[i])
+
 end
 
-local z=table.concat(q)
+local encrypted=table.concat(chars)
 
-local out={}
+local plain={}
 
-for i=1,#z do
+for i=1,#encrypted do
 
-out[i]=string.char(
+plain[i]=string.char(
 bx(
-z:byte(i),
-k:byte((i-1)%#k+1)
+encrypted:byte(i),
+k:byte(
+(i-1)%#k+1
 )
 )
 
 end
 
-local src=table.concat(out)
+local source=table.concat(plain)
 
-local f=loadstring or load
+local loader=loadstring or load
 
-local fn,err=f(src)
+local fn,errorMessage=loader(source)
 
 if not fn then
-error(err)
+
+error(errorMessage)
+
 end
 
 return fn()
 `;
+
+};
+
+const obfuscate=(source,options)=>{
+
+const key=crypto
+.randomBytes(18)
+.toString("hex");
+
+const seed=makeSeed();
+
+let payload=source;
+
+if(options.xor!==false){
+
+payload=xorData(
+payload,
+key
+);
+
+}
+
+let bytes=Buffer.from(
+payload,
+"latin1"
+);
+
+if(options.numeric!==false){
+
+bytes=shuffleBytes(
+bytes,
+seed
+);
+
+}
+
+let encoded;
+
+if(options.base64!==false){
+
+encoded=bytes.toString(
+"base64"
+);
+
+}else{
+
+encoded=bytes.toString(
+"latin1"
+);
+
+}
+
+if(options.loader===false){
+
+return encoded;
+
+}
+
+return createLoader(
+encoded,
+key,
+seed
+);
+
 };
 
 exports.handler=async(event)=>{
 
-if(event.httpMethod==="OPTIONS")
-return response({ok:true});
+if(
+event.httpMethod===
+"OPTIONS"
+){
 
-if(event.httpMethod!=="POST")
-return response(
-{ok:false,error:"POST فقط"},
+return send({
+ok:true
+});
+
+}
+
+if(
+event.httpMethod!==
+"POST"
+){
+
+return send(
+{
+ok:false,
+error:"يسمح بطلب POST فقط"
+},
 405
 );
 
-const expected=process.env.LUA_SHIELD_API_KEY;
+}
 
-const supplied=
+const configuredKey=
+process.env.LUA_SHIELD_API_KEY;
+
+const suppliedKey=
 event.headers?.["x-api-key"]||
 event.headers?.["X-Api-Key"]||
 "";
 
-if(expected&&supplied!==expected){
+if(
+configuredKey&&
+suppliedKey!==configuredKey
+){
 
-return response(
-{ok:false,error:"مفتاح API غير صحيح"},
+return send(
+{
+ok:false,
+error:"مفتاح API غير صحيح"
+},
 401
 );
 
@@ -281,40 +385,76 @@ return response(
 
 try{
 
-const body=JSON.parse(event.body||"{}");
+const body=
+JSON.parse(
+event.body||"{}"
+);
 
 const source=
-typeof body.code==="string"
-?body.code
-:"";
+typeof body.code===
+"string"
+?
+body.code
+:
+"";
 
-if(!source.trim())
-return response(
-{ok:false,error:"الكود فارغ"},
+if(!source.trim()){
+
+return send(
+{
+ok:false,
+error:"الكود فارغ"
+},
 400
 );
 
-if(Buffer.byteLength(source,"utf8")>4500000)
-return response(
-{ok:false,error:"حجم الملف أكبر من الحد المسموح"},
+}
+
+if(
+Buffer.byteLength(
+source,
+"utf8"
+)>4500000
+){
+
+return send(
+{
+ok:false,
+error:"حجم الملف أكبر من الحد المسموح"
+},
 413
 );
 
-const output=makeLua(
+}
+
+const options=
+body.options||
+{};
+
+const output=
+obfuscate(
 source,
-body.options||{}
+options
 );
 
-return response({
+return send({
 ok:true,
 code:output,
 filename:"protected.lua"
 });
 
-}catch(e){
+}catch(error){
 
-return response(
-{ok:false,error:"تعذر معالجة الطلب"},
+return send(
+{
+ok:false,
+error:
+"حدث خطأ داخل الخادم: "+
+(
+error.message||
+"Unknown error"
+)
+},
 500
 );
 
