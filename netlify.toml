@@ -1,0 +1,10 @@
+[build]
+publish = "."
+
+[functions]
+directory = "netlify/functions"
+
+[[redirects]]
+from = "/api/obfuscate"
+to = "/.netlify/functions/obfuscate"
+status = 200
